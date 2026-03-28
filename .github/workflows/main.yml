@@ -1,0 +1,112 @@
+name: Deploy Backend to Production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Create deployment package
+        run: |
+          mkdir -p deploy
+          rsync -av backend/ deploy/ \
+            --exclude node_modules \
+            --exclude .git \
+            --exclude .env \
+            --exclude '*.log' \
+            --exclude logs
+
+      - name: Create backup on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            BACKUP_DIR="$HOME/backups/goodpulse-$(date +%Y%m%d-%H%M%S)"
+            mkdir -p $BACKUP_DIR
+            if [ -d "$HOME/goodpulse/backend" ]; then
+              cp -r $HOME/goodpulse/backend $BACKUP_DIR/
+              echo "Backup created at $BACKUP_DIR"
+            fi
+            # Keep only last 5 backups
+            cd $HOME/backups && ls -dt goodpulse-* | tail -n +6 | xargs rm -rf 2>/dev/null || true
+
+      - name: Deploy to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "deploy/*"
+          target: "$HOME/goodpulse/backend"
+          strip_components: 1
+
+      - name: Install dependencies & setup
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd $HOME/goodpulse/backend
+            npm install --omit=dev
+            mkdir -p logs
+
+      - name: Write .env file
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cat > $HOME/goodpulse/backend/.env << 'EOF'
+            ${{ secrets.BACKEND_ENV }}
+            EOF
+            chmod 600 $HOME/goodpulse/backend/.env
+
+      - name: Restart with PM2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd $HOME/goodpulse/backend
+            pm2 restart goodpulse-backend || pm2 start server.js --name goodpulse-backend
+            pm2 save
+
+      - name: Health check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            sleep 5
+            curl -f http://localhost:5000/api/health || (echo "Health check failed! Rolling back..." && cd $HOME/backups && LATEST=$(ls -dt goodpulse-* | head -1) && cp -r $LATEST/backend/* $HOME/goodpulse/backend/ && cd $HOME/goodpulse/backend && npm install --omit=dev && pm2 restart goodpulse-backend && exit 1)
+            echo "Health check passed!"
+
+      - name: Deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment successful!"
+          else
+            echo "❌ Deployment failed! Backup was auto-restored."
+          fi
