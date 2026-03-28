@@ -126,7 +126,7 @@ exports.completeRegistration = async (req, res, next) => {
     }
 
     user.name = name;
-    user.email = email || '';
+    if (email) user.email = email;
     if (area) user.location.area = area;
     if (city) user.location.city = city;
     if (district) user.location.district = district;
