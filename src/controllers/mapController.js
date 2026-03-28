@@ -2,8 +2,11 @@ const Submission = require('../models/Submission');
 
 exports.getHeatmapData = async (req, res, next) => {
   try {
-    const submissions = await Submission.find({ status: 'approved' })
-      .select('location')
+    const submissions = await Submission.find({
+      status: 'approved',
+      'location.coordinates.0': { $exists: true },
+    })
+      .select('location submissionType')
       .lean();
 
     const heatmapData = submissions.map((s) => ({
@@ -65,21 +68,25 @@ exports.getNearby = async (req, res, next) => {
   try {
     const { lat, lng, radius = 50 } = req.query;
 
-    if (!lat || !lng) {
-      return res.status(400).json({ message: 'lat and lng are required' });
-    }
-
-    const submissions = await Submission.find({
+    let query = {
       status: 'approved',
-      location: {
+      'location.coordinates.0': { $exists: true },
+    };
+
+    // If lat/lng provided, use geo query; otherwise return all with location
+    if (lat && lng) {
+      query.location = {
         $geoWithin: {
           $centerSphere: [
             [parseFloat(lng), parseFloat(lat)],
-            parseFloat(radius) / 6378.1, // Convert km to radians
+            parseFloat(radius) / 6378.1,
           ],
         },
-      },
-    })
+      };
+      delete query['location.coordinates'];
+    }
+
+    const submissions = await Submission.find(query)
       .populate('userId', 'name avatar')
       .sort({ createdAt: -1 })
       .limit(100)
