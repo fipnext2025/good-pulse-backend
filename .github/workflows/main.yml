@@ -3,8 +3,6 @@ name: Deploy Backend to Production
 on:
   push:
     branches: [main]
-    paths:
-      - 'backend/**'
   workflow_dispatch:
 
 jobs:
@@ -24,12 +22,13 @@ jobs:
       - name: Create deployment package
         run: |
           mkdir -p deploy
-          rsync -av backend/ deploy/ \
+          rsync -av . deploy/ \
             --exclude node_modules \
             --exclude .git \
             --exclude .env \
             --exclude '*.log' \
-            --exclude logs
+            --exclude logs \
+            --exclude deploy
 
       - name: Create backup on server
         uses: appleboy/ssh-action@v1.0.3
@@ -106,7 +105,7 @@ jobs:
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
-            echo "✅ Deployment successful!"
+            echo "Deployment successful!"
           else
-            echo "❌ Deployment failed! Backup was auto-restored."
+            echo "Deployment failed! Backup was auto-restored."
           fi
