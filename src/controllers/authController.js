@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const generateToken = require('../utils/generateToken');
+const { sendOTP } = require('../services/smsService');
 
 // In-memory OTP store (use Redis in production)
 const otpStore = new Map();
@@ -27,13 +28,15 @@ exports.sendOtp = async (req, res, next) => {
       expiresAt: Date.now() + 5 * 60 * 1000,
     });
 
-    // TODO: Integrate with SMS service (Twilio, MSG91, etc.) to send OTP
-    // For now, log OTP to console for development/testing
-    console.log(`[DEV] OTP for ${phone}: ${otp}`);
+    // Send OTP via Twilio in production, log in dev
+    if (process.env.NODE_ENV === 'production') {
+      await sendOTP(phone, otp);
+    } else {
+      console.log(`[DEV] OTP for ${phone}: ${otp}`);
+    }
 
     res.json({
       message: 'OTP sent successfully',
-      // Remove this in production - only for development testing
       devOtp: process.env.NODE_ENV !== 'production' ? otp : undefined,
     });
   } catch (error) {
